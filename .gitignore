@@ -12,3 +12,5 @@ backend.tf
 
 # Terraform local directory
 .terraform/
+*.tfstate
+*.tfstate.*

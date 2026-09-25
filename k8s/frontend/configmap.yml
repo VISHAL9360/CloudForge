@@ -13,6 +13,7 @@ data:
   SHIPPING_SERVICE_ADDR: shippingservice.shipping.svc.cluster.local:50051
   CHECKOUT_SERVICE_ADDR: checkoutservice.checkout.svc.cluster.local:5050
   AD_SERVICE_ADDR: adservice.ad.svc.cluster.local:9555
+  SHOPPING_ASSISTANT_SERVICE_ADDR: shoppingassistantservice.shoppingassistant.svc.cluster.local:8080
 
   ENABLE_PROFILER: "0"
   ENABLE_TRACING: "0"
