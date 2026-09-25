@@ -56,8 +56,10 @@ jobs:
 
       - name: Check Ansible Syntax
         run: |
-          export ANSIBLE_ROLES_PATH=ansible/roles
           cd ansible
+          export ANSIBLE_CONFIG=ansible.cfg
+          export ANSIBLE_ROLES_PATH=$PWD/roles
+          mkdir -p ~/.ssh && touch ~/.ssh/k8s.pem
           ansible-playbook playbooks/site.yml --syntax-check -i inventories/production/hosts.ini
 
   k8s-manifests:
