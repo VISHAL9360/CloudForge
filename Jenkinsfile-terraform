@@ -1,0 +1,248 @@
+pipeline {
+
+    agent any
+
+    environment {
+
+        TF_DIR = "terraform/enviroments/dev"
+        GIT_BRANCH = "main"
+        GIT_REPO = "https://github.com/VISHAL9360/CloudForge.git"
+
+        AWS_ACCESS_KEY_ID = credentials('aws-access-key')
+        AWS_SECRET_ACCESS_KEY = credentials('aws-secret-key')
+        AWS_DEFAULT_REGION = "ap-south-1"
+
+    }
+
+    options {
+        timestamps()
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+
+        stage('Prepare Git Branch') {
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'Jenkins-access-github',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+
+                    sh '''
+
+                    git fetch https://${GIT_USER}:${GIT_TOKEN}@github.com/VISHAL9360/CloudForge.git
+
+                    git checkout -B ${GIT_BRANCH}
+
+                    git reset --hard origin/${GIT_BRANCH}
+
+                    '''
+
+                }
+
+            }
+        }
+
+
+        stage('Terraform Init') {
+            steps {
+                dir("${TF_DIR}") {
+                    sh 'terraform init'
+                }
+            }
+        }
+
+
+
+        stage('Terraform Format Auto Fix') {
+            steps {
+
+                script {
+
+                    def status = sh(
+                        script: "terraform fmt -check -recursive terraform/",
+                        returnStatus: true
+                    )
+
+                    if (status != 0) {
+
+                        echo "Formatting issues found. Fixing..."
+
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: 'Jenkins-access-github',
+                                usernameVariable: 'GIT_USER',
+                                passwordVariable: 'GIT_TOKEN'
+                            )
+                        ]) {
+
+                            sh '''
+
+                            terraform fmt -recursive terraform/
+
+                            git config user.email "jenkins@cloudforge.com"
+                            git config user.name "Jenkins"
+
+                            git add terraform/
+
+                            git commit -m "Auto terraform fmt fix" || true
+
+                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/VISHAL9360/CloudForge.git ${GIT_BRANCH}
+
+                            '''
+
+                        }
+
+                    } else {
+
+                        echo "Terraform formatting OK"
+
+                    }
+
+                }
+            }
+        }
+
+
+
+        stage('Terraform Validate') {
+            steps {
+                dir("${TF_DIR}") {
+                    sh 'terraform validate'
+                }
+            }
+        }
+
+
+
+        stage('Security Scan + Report') {
+            steps {
+
+                script {
+
+                    sh '''
+
+                    rm -f security-report.txt tfsec.txt checkov.txt
+
+                    echo "CloudForge Terraform Security Report" >> security-report.txt
+                    echo "------------------------------------" >> security-report.txt
+                    echo "" >> security-report.txt
+
+                    echo "Running tfsec..."
+                    tfsec terraform/ > tfsec.txt || true
+
+                    echo "Running Checkov..."
+                    checkov -d terraform/ > checkov.txt || true
+
+
+                    CRITICAL=$(grep -i "critical" tfsec.txt | wc -l)
+                    HIGH=$(grep -i "high" tfsec.txt | wc -l)
+                    MEDIUM=$(grep -i "medium" tfsec.txt | wc -l)
+                    LOW=$(grep -i "low" tfsec.txt | wc -l)
+
+
+                    echo "CRITICAL: $CRITICAL" >> security-report.txt
+                    echo "HIGH: $HIGH" >> security-report.txt
+                    echo "MEDIUM: $MEDIUM" >> security-report.txt
+                    echo "LOW: $LOW" >> security-report.txt
+                    echo "" >> security-report.txt
+
+
+                    if [ "$CRITICAL" -eq "0" ]; then
+
+                        echo "Good to go." >> security-report.txt
+
+                    else
+
+                        echo "Security issues detected." >> security-report.txt
+
+                    fi
+
+
+                    echo ""
+                    echo "=========== SECURITY SUMMARY =========="
+                    cat security-report.txt
+                    echo "======================================="
+
+                    '''
+
+                }
+
+            }
+        }
+
+
+
+        stage('Push Security Report') {
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'Jenkins-access-github',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+
+                    sh '''
+
+                    git config user.email "jenkins@cloudforge.com"
+                    git config user.name "Jenkins"
+
+                    git add security-report.txt
+
+                    git commit -m "Update security report" || true
+
+                    git push https://${GIT_USER}:${GIT_TOKEN}@github.com/VISHAL9360/CloudForge.git ${GIT_BRANCH}
+
+                    '''
+
+                }
+
+            }
+        }
+
+
+
+        stage('Terraform Plan') {
+            steps {
+
+                dir("${TF_DIR}") {
+
+                    sh '''
+
+                    terraform plan \
+                    -var-file=terraform.tfvars \
+                    -out=tfplan
+
+                    '''
+
+                }
+
+            }
+        }
+
+
+
+        stage('Archive Plan') {
+            steps {
+
+                archiveArtifacts artifacts: 'terraform/enviroments/dev/tfplan'
+
+            }
+        }
+
+
+    }
+
+}

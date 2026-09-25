@@ -1,0 +1,14 @@
+---
+
+- name: Wait for API server to become ready
+  command: kubectl get nodes
+  register: api_ready
+  retries: 20
+  delay: 15
+  until: api_ready.rc == 0
+  changed_when: false
+
+
+- name: Install Calico network plugin
+  command: kubectl apply --validate=false -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.0/manifests/calico.yaml
+  changed_when: true

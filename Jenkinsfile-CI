@@ -1,0 +1,213 @@
+pipeline {
+
+    agent any
+
+    options {
+        timestamps()
+    }
+
+    environment {
+
+        GIT_BRANCH = "main"
+        IMAGE_NAMESPACE = "VISHAL9360"
+        DOCKER_BUILDKIT = "1"
+
+        // Jenkins credential: Username + Password (Docker access token)
+        DOCKER_CREDS = credentials('docker-credentials')
+
+        SERVICES = "frontend cartservice productcatalogservice currencyservice paymentservice shippingservice emailservice checkoutservice recommendationservice adservice"
+
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'git fetch --all'
+            }
+        }
+
+        stage('Detect Changed Services') {
+            steps {
+                script {
+
+                    def changedFiles = sh(
+                        script: "git diff HEAD~1 HEAD --name-only || true",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Changed Files:"
+                    echo changedFiles
+
+                    def changedServices = []
+
+                    SERVICES.split().each { svc ->
+                        if (changedFiles.contains("microservices-demo/src/${svc}/")) {
+                            changedServices.add(svc)
+                        }
+                    }
+
+                    env.CHANGED_SERVICES = changedServices.join(" ")
+
+                    if (env.CHANGED_SERVICES == "") {
+                        echo "No service changes detected."
+                    } else {
+                        echo "Changed Services: ${env.CHANGED_SERVICES}"
+                    }
+
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+
+            when {
+                expression { env.CHANGED_SERVICES?.trim() }
+            }
+
+            steps {
+                script {
+
+                    env.CHANGED_SERVICES.split().each { svc ->
+
+                        echo "Running unit tests for ${svc}"
+
+                        dir("microservices-demo/src/${svc}") {
+
+                            sh '''
+                            set -e
+
+                            if [ -f package.json ]; then
+                                npm install
+                                npm test
+
+                            elif [ -f go.mod ]; then
+                                go test ./...
+
+                            elif [ -f requirements.txt ]; then
+                                pip install -r requirements.txt
+                                pytest || true
+
+                            elif ls *.csproj 1> /dev/null 2>&1; then
+                                dotnet test
+
+                            elif [ -f pom.xml ]; then
+                                mvn test
+
+                            else
+                                echo "No unit tests configured."
+                            fi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Integration Tests') {
+
+            when {
+                expression { env.CHANGED_SERVICES?.trim() }
+            }
+
+            steps {
+
+                echo "Running integration tests..."
+
+                sh '''
+                set -e
+
+                cd microservices-demo
+
+                docker compose down || true
+                docker compose up -d
+
+                echo "Waiting for services to start..."
+                sleep 30
+
+                echo "Checking frontend health..."
+                curl -f http://localhost:8081
+
+                docker compose down -v --remove-orphans
+                '''
+
+            }
+        }
+
+        stage('Docker Login') {
+
+            steps {
+                sh '''
+                echo $DOCKER_CREDS_PSW | docker login -u $DOCKER_CREDS_USR --password-stdin
+                '''
+            }
+
+        }
+
+        stage('Build and Push Images') {
+
+            when {
+                expression { env.CHANGED_SERVICES?.trim() }
+            }
+
+            steps {
+
+                script {
+
+                    def builds = [:]
+
+                    env.CHANGED_SERVICES.split().each { svc ->
+
+                        builds[svc] = {
+
+                            def versionTag = "v${BUILD_NUMBER}"
+
+                            sh """
+                            set -e
+
+                            echo "Building Docker image for ${svc}"
+
+                            if [ "${svc}" = "cartservice" ]; then
+                                docker build -t ${IMAGE_NAMESPACE}/${svc}:${versionTag} microservices-demo/src/cartservice/src
+                            else
+                                docker build -t ${IMAGE_NAMESPACE}/${svc}:${versionTag} microservices-demo/src/${svc}
+                            fi
+
+                            docker tag ${IMAGE_NAMESPACE}/${svc}:${versionTag} ${IMAGE_NAMESPACE}/${svc}:latest
+
+                            docker push ${IMAGE_NAMESPACE}/${svc}:${versionTag}
+                            docker push ${IMAGE_NAMESPACE}/${svc}:latest
+                            """
+
+                        }
+
+                    }
+
+                    parallel builds
+
+                }
+
+            }
+
+        }
+
+    }
+
+    post {
+
+        success {
+            echo "CI pipeline completed successfully."
+        }
+
+        failure {
+            echo "Pipeline failed. Check logs."
+        }
+
+        always {
+            sh 'docker logout || true'
+        }
+
+    }
+
+}

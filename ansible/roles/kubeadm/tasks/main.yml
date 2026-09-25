@@ -1,0 +1,66 @@
+---
+
+# Kubernetes installation role
+# Stable kubeadm installation for Ubuntu 22.04 / 24.04
+# Pipeline-safe and idempotent
+
+
+- name: Install required packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: yes
+
+
+- name: Remove old Kubernetes keyring
+  file:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    state: absent
+
+
+- name: Remove old Kubernetes repo
+  file:
+    path: /etc/apt/sources.list.d/kubernetes.list
+    state: absent
+
+
+- name: Install Kubernetes apt key
+  shell: |
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | apt-key add -
+
+
+- name: Add Kubernetes repository
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: |
+      deb https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /
+
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+
+- name: Install Kubernetes packages
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+
+
+- name: Hold Kubernetes packages
+  command: apt-mark hold kubelet kubeadm kubectl
+  changed_when: false
+
+
+- name: Enable kubelet
+  service:
+    name: kubelet
+    enabled: yes
+    state: started
